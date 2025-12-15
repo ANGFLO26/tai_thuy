@@ -1,0 +1,13 @@
+#
+# Requirements for Kafka streaming script: kafka_streaming.py
+# Install with:
+#   pip install -r requirements.txt
+#
+
+numpy
+pandas
+pyarrow
+fsspec
+kafka-python
+
+

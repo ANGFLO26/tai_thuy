@@ -1,0 +1,13 @@
+#
+# Requirements for training script: train_model.py
+# Install with:
+#   pip install -r requirements.txt
+#
+
+# Core data & ML stack
+pyspark==4.0.1
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+
+
