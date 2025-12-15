@@ -1,6 +1,9 @@
 from celery import Celery
 import subprocess
 import os
+import signal
+import time
+import json
 
 app = Celery(
     'system_worker',
@@ -34,8 +37,15 @@ CLUSTER_NODES = {
 }
 
 @app.task(bind=True)
-def run_command(self, command, env_vars=None):
-    """Chạy một lệnh shell"""
+def run_command(self, command, env_vars=None, timeout=300, working_dir=None):
+    """Chạy một lệnh shell
+    
+    Args:
+        command: Lệnh shell cần chạy
+        env_vars: Dictionary các biến môi trường
+        timeout: Timeout tính bằng giây (mặc định 300s)
+        working_dir: Thư mục làm việc (mặc định None)
+    """
     try:
         env = os.environ.copy()
         if env_vars:
@@ -46,8 +56,9 @@ def run_command(self, command, env_vars=None):
             shell=True,
             capture_output=True,
             text=True,
-            timeout=300,
-            env=env
+            timeout=timeout,
+            env=env,
+            cwd=working_dir
         )
         return {
             'status': 'success',
@@ -58,7 +69,7 @@ def run_command(self, command, env_vars=None):
     except subprocess.TimeoutExpired:
         return {
             'status': 'error',
-            'message': 'Command execution timed out (300s)'
+            'message': f'Command execution timed out ({timeout}s)'
         }
     except Exception as e:
         return {
@@ -344,3 +355,400 @@ def docker_compose_logs(self, path, service=None, tail=100):
         'stderr': result.stderr,
         'return_code': result.returncode
     }
+
+
+@app.task(bind=True)
+def spark_submit(self, script_path, master_url, executor_memory='4G', driver_memory='1G', 
+                 packages=None, conf=None, working_dir=None, env_vars=None, timeout=3600, 
+                 detach=False, pid_file=None, log_file=None):
+    """Chạy Spark submit với cấu hình đầy đủ
+    
+    Args:
+        script_path: Đường dẫn đến Spark script
+        master_url: Spark master URL (vd: spark://192.168.80.52:7077)
+        executor_memory: Memory cho executor (mặc định 4G)
+        driver_memory: Memory cho driver (mặc định 1G)
+        packages: List packages cần download (vd: ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'])
+        conf: Dictionary các Spark configs
+        working_dir: Thư mục làm việc (mặc định ~/spark/bin)
+        env_vars: Dictionary các biến môi trường
+        timeout: Timeout tính bằng giây (mặc định 3600s)
+        detach: Chạy ở background (mặc định False)
+        pid_file: File để lưu PID nếu detach=True
+        log_file: File để lưu log nếu detach=True
+    """
+    try:
+        # Expand paths
+        script_path = os.path.expanduser(script_path)
+        script_name = os.path.basename(script_path).replace('.py', '')
+        
+        if working_dir:
+            working_dir = os.path.expanduser(working_dir)
+        else:
+            working_dir = os.path.expanduser('~/spark/bin')
+        
+        if not pid_file:
+            pid_file = f'/tmp/spark_{script_name}.pid'
+        if not log_file:
+            log_file = f'/tmp/spark_{script_name}.log'
+        
+        # Build spark-submit command
+        cmd = ['./spark-submit']
+        cmd.extend(['--master', master_url])
+        cmd.extend(['--executor-memory', executor_memory])
+        cmd.extend(['--driver-memory', driver_memory])
+        
+        # Add packages
+        if packages:
+            if isinstance(packages, str):
+                cmd.extend(['--packages', packages])
+            elif isinstance(packages, list):
+                cmd.extend(['--packages', ','.join(packages)])
+        
+        # Add Spark configs
+        if conf:
+            for key, value in conf.items():
+                cmd.extend(['--conf', f'{key}={value}'])
+        
+        # Add script path
+        cmd.append(script_path)
+        
+        # Setup environment
+        env = os.environ.copy()
+        if env_vars:
+            env.update(env_vars)
+        
+        # Set JAVA_HOME if not provided
+        if 'JAVA_HOME' not in env:
+            env['JAVA_HOME'] = '/usr/lib/jvm/java-17-openjdk-amd64'
+        
+        # Run command
+        if detach:
+            # Chạy ở background với nohup
+            full_cmd = f"cd {working_dir} && nohup {' '.join(cmd)} > {log_file} 2>&1 & echo $! > {pid_file}"
+            result = subprocess.run(
+                full_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"Failed to start Spark job in background: {result.stderr}")
+            
+            # Read PID
+            try:
+                with open(pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+            except:
+                # Try to find process
+                find_cmd = f"pgrep -f '{script_name}'"
+                find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+                if find_result.returncode == 0:
+                    pid = int(find_result.stdout.strip().split('\n')[0])
+                else:
+                    raise Exception("Could not determine PID")
+            
+            # Verify process is running
+            time.sleep(2)
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                raise Exception(f"Process {pid} started but immediately exited. Check {log_file}")
+            
+            return {
+                'status': 'success',
+                'pid': pid,
+                'pid_file': pid_file,
+                'log_file': log_file,
+                'command': ' '.join(cmd),
+                'detached': True
+            }
+        else:
+            # Chạy bình thường và đợi kết quả
+            result = subprocess.run(
+                ' '.join(cmd),
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=working_dir
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"Spark submit failed: {result.stderr}")
+            
+            return {
+                'status': 'success',
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'return_code': result.returncode,
+                'command': ' '.join(cmd),
+                'detached': False
+            }
+    except subprocess.TimeoutExpired:
+        if detach:
+            raise Exception(f'Spark submit background start timed out')
+        else:
+            raise Exception(f'Spark submit timed out ({timeout}s)')
+    except Exception as e:
+        raise Exception(f"Spark submit error: {str(e)}")
+
+
+@app.task(bind=True)
+def run_python_background(self, script_path, working_dir=None, env_vars=None, 
+                         pid_file=None, log_file=None):
+    """Chạy Python script ở background và lưu PID
+    
+    Args:
+        script_path: Đường dẫn đến Python script
+        working_dir: Thư mục làm việc
+        env_vars: Dictionary các biến môi trường
+        pid_file: Đường dẫn file để lưu PID (mặc định /tmp/{script_name}.pid)
+        log_file: Đường dẫn file log (mặc định /tmp/{script_name}.log)
+    """
+    try:
+        script_path = os.path.expanduser(script_path)
+        script_name = os.path.basename(script_path).replace('.py', '')
+        
+        if working_dir:
+            working_dir = os.path.expanduser(working_dir)
+        else:
+            working_dir = os.path.dirname(script_path)
+        
+        if not pid_file:
+            pid_file = f'/tmp/{script_name}.pid'
+        
+        if not log_file:
+            log_file = f'/tmp/{script_name}.log'
+        
+        # Setup environment
+        env = os.environ.copy()
+        if env_vars:
+            env.update(env_vars)
+        
+        # Build command với nohup
+        cmd = f"cd {working_dir} && nohup python3 {script_path} > {log_file} 2>&1 & echo $! > {pid_file}"
+        
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"Failed to start background process: {result.stderr}")
+        
+        # Read PID
+        try:
+            with open(pid_file, 'r') as f:
+                pid = int(f.read().strip())
+        except:
+            # Try to find process by name
+            find_cmd = f"pgrep -f '{script_name}'"
+            find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+            if find_result.returncode == 0:
+                pid = int(find_result.stdout.strip().split('\n')[0])
+            else:
+                raise Exception("Could not determine PID")
+        
+        # Verify process is running
+        time.sleep(2)
+        try:
+            os.kill(pid, 0)  # Check if process exists
+        except OSError:
+            raise Exception(f"Process {pid} started but immediately exited. Check {log_file}")
+        
+        return {
+            'status': 'success',
+            'pid': pid,
+            'pid_file': pid_file,
+            'log_file': log_file,
+            'script': script_path,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        raise Exception(f"Failed to start background Python process: {str(e)}")
+
+
+@app.task(bind=True)
+def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
+    """Kill process từ PID file hoặc process name
+    
+    Args:
+        pid_file: Đường dẫn file chứa PID
+        process_name: Tên process để tìm (vd: 'kafka_streaming.py')
+        signal_type: Loại signal ('TERM' hoặc 'KILL')
+    """
+    try:
+        pids = []
+        
+        # Get PID from file
+        if pid_file:
+            pid_file = os.path.expanduser(pid_file)
+            if os.path.exists(pid_file):
+                with open(pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                    pids.append(pid)
+        
+        # Find PID by process name
+        if process_name:
+            find_cmd = f"pgrep -f '{process_name}'"
+            find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+            if find_result.returncode == 0:
+                found_pids = [int(p) for p in find_result.stdout.strip().split('\n') if p]
+                pids.extend(found_pids)
+        
+        if not pids:
+            return {
+                'status': 'warning',
+                'message': 'No process found to kill'
+            }
+        
+        # Remove duplicates
+        pids = list(set(pids))
+        
+        # Kill processes
+        killed = []
+        failed = []
+        signal_num = signal.SIGTERM if signal_type == 'TERM' else signal.SIGKILL
+        
+        for pid in pids:
+            try:
+                os.kill(pid, signal_num)
+                killed.append(pid)
+                time.sleep(1)
+            except ProcessLookupError:
+                failed.append(f"PID {pid} not found")
+            except PermissionError:
+                failed.append(f"Permission denied for PID {pid}")
+            except Exception as e:
+                failed.append(f"Error killing PID {pid}: {str(e)}")
+        
+        # Clean up PID file if exists
+        if pid_file and os.path.exists(pid_file):
+            try:
+                os.remove(pid_file)
+            except:
+                pass
+        
+        return {
+            'status': 'success',
+            'killed_pids': killed,
+            'failed': failed,
+            'signal': signal_type
+        }
+    except Exception as e:
+        raise Exception(f"Failed to kill process: {str(e)}")
+
+
+@app.task(bind=True)
+def check_service_status(self, service_type, host=None, port=None):
+    """Kiểm tra service đã sẵn sàng chưa
+    
+    Args:
+        service_type: Loại service ('hadoop', 'spark', 'kafka', 'hdfs')
+        host: Host của service (mặc định lấy từ CLUSTER_NODES)
+        port: Port của service
+    """
+    try:
+        if service_type == 'hadoop':
+            # Check Hadoop Namenode bằng jps
+            cmd = "jps | grep -i namenode"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and 'NameNode' in result.stdout:
+                return {'status': 'success', 'service': 'hadoop', 'ready': True}
+            return {'status': 'success', 'service': 'hadoop', 'ready': False}
+        
+        elif service_type == 'spark':
+            # Check Spark Master bằng curl
+            if not host:
+                host = CLUSTER_NODES['spark-master']['host']
+            if not port:
+                port = 8080
+            
+            cmd = f"curl -s -o /dev/null -w '%{{http_code}}' http://{host}:{port} || echo '000'"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if result.stdout.strip() == '200':
+                return {'status': 'success', 'service': 'spark', 'ready': True}
+            return {'status': 'success', 'service': 'spark', 'ready': False}
+        
+        elif service_type == 'kafka':
+            # Check Kafka container
+            cmd = "docker ps --filter 'name=kafka' --format '{{.Names}}'"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and 'kafka' in result.stdout.lower():
+                return {'status': 'success', 'service': 'kafka', 'ready': True}
+            return {'status': 'success', 'service': 'kafka', 'ready': False}
+        
+        elif service_type == 'hdfs':
+            # Check HDFS bằng hdfs dfsadmin
+            cmd = "hdfs dfsadmin -report 2>&1 | head -5"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and 'Live datanodes' in result.stdout:
+                return {'status': 'success', 'service': 'hdfs', 'ready': True}
+            return {'status': 'success', 'service': 'hdfs', 'ready': False}
+        
+        else:
+            raise Exception(f"Unknown service type: {service_type}")
+    
+    except Exception as e:
+        raise Exception(f"Failed to check service status: {str(e)}")
+
+
+@app.task(bind=True)
+def check_hdfs_path(self, hdfs_path):
+    """Kiểm tra path trong HDFS có tồn tại không
+    
+    Args:
+        hdfs_path: Đường dẫn HDFS (vd: hdfs://192.168.80.52:9000/model)
+    """
+    try:
+        cmd = f"hdfs dfs -test -e {hdfs_path}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        
+        exists = result.returncode == 0
+        return {
+            'status': 'success',
+            'path': hdfs_path,
+            'exists': exists,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        raise Exception(f"Failed to check HDFS path: {str(e)}")
+
+
+@app.task(bind=True)
+def check_kafka_topic(self, bootstrap_server, topic_name):
+    """Kiểm tra Kafka topic có tồn tại không
+    
+    Args:
+        bootstrap_server: Kafka bootstrap server (vd: 192.168.80.122:9092)
+        topic_name: Tên topic cần kiểm tra
+    """
+    try:
+        cmd = (
+            f"docker exec -i kafka kafka-topics "
+            f"--bootstrap-server {bootstrap_server} "
+            f"--list | grep -w {topic_name}"
+        )
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        
+        exists = result.returncode == 0 and topic_name in result.stdout
+        return {
+            'status': 'success',
+            'topic': topic_name,
+            'bootstrap_server': bootstrap_server,
+            'exists': exists,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        raise Exception(f"Failed to check Kafka topic: {str(e)}")
