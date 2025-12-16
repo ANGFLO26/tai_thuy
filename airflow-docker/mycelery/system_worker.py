@@ -4,6 +4,7 @@ import os
 import signal
 import time
 import json
+import sys
 
 app = Celery(
     'system_worker',
@@ -546,23 +547,83 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         if not os.path.exists(script_path):
             raise Exception(f"Script not found: {script_path}")
         
+        # Kiểm tra working directory có tồn tại không
+        if not os.path.exists(working_dir):
+            raise Exception(f"Working directory not found: {working_dir}")
+        
+        # Xác định Python interpreter để dùng
+        # Ưu tiên dùng sys.executable (cùng Python với Celery worker) để đảm bảo cùng environment
+        python_executable = sys.executable if sys.executable else 'python3'
+        
+        # Kiểm tra Python có sẵn không
+        python_check = subprocess.run(
+            [python_executable, '--version'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        python_version = python_check.stdout.strip() if python_check.returncode == 0 else "Unknown"
+        
+        # Lấy Python path
+        which_result = subprocess.run(
+            ['which', python_executable] if python_executable != sys.executable else [python_executable, '-c', 'import sys; print(sys.executable)'],
+            capture_output=True,
+            text=True
+        )
+        python_path = which_result.stdout.strip() if which_result.returncode == 0 else python_executable
+        
+        # Kiểm tra PYTHONPATH và thêm vào env nếu cần
+        if 'PYTHONPATH' not in env or not env.get('PYTHONPATH'):
+            # Thêm working directory vào PYTHONPATH để script có thể import modules
+            current_pythonpath = os.environ.get('PYTHONPATH', '')
+            if current_pythonpath:
+                env['PYTHONPATH'] = f"{working_dir}:{current_pythonpath}"
+            else:
+                env['PYTHONPATH'] = working_dir
+        else:
+            # Thêm working directory vào đầu PYTHONPATH
+            env['PYTHONPATH'] = f"{working_dir}:{env['PYTHONPATH']}"
+        
         # Mở log file để ghi (append mode để không mất log cũ)
+        # Ghi thông tin debug vào log trước khi start process
+        with open(log_file, 'a') as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"[DEBUG] Starting process at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"[DEBUG] Script: {script_path}\n")
+            f.write(f"[DEBUG] Working dir: {working_dir}\n")
+            f.write(f"[DEBUG] Python executable: {python_executable}\n")
+            f.write(f"[DEBUG] Python version: {python_version}\n")
+            f.write(f"[DEBUG] Python path: {python_path}\n")
+            f.write(f"[DEBUG] PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\n")
+            f.write(f"[DEBUG] PID file: {pid_file}\n")
+            f.write(f"[DEBUG] Current user: {os.getenv('USER', 'unknown')}\n")
+            f.write(f"[DEBUG] Current directory: {os.getcwd()}\n")
+            f.write(f"[DEBUG] Script exists: {os.path.exists(script_path)}\n")
+            f.write(f"[DEBUG] Working dir exists: {os.path.exists(working_dir)}\n")
+            f.write(f"{'='*60}\n")
+        
+        # Mở log file để redirect stdout/stderr của child process
         log_fd = open(log_file, 'a')
         
         # Chạy process với Popen để có thể lấy PID trực tiếp
-        # Sử dụng python3 -u để unbuffered output (quan trọng cho việc xem log real-time)
+        # Sử dụng sys.executable để đảm bảo dùng cùng Python environment với Celery worker
+        # -u flag để unbuffered output (quan trọng cho việc xem log real-time)
         try:
             process = subprocess.Popen(
-                ['python3', '-u', script_path],
+                [python_executable, '-u', script_path],
                 cwd=working_dir,
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 env=env,
-                preexec_fn=os.setsid  # Tạo process group mới để dễ kill sau này
+                preexec_fn=os.setsid,  # Tạo process group mới để dễ kill sau này
+                start_new_session=True  # Tách process khỏi parent session
             )
         except Exception as e:
             log_fd.close()
-            raise Exception(f"Failed to start process: {str(e)}")
+            error_msg = f"Failed to start process: {str(e)}"
+            with open(log_file, 'a') as f:
+                f.write(f"[ERROR] {error_msg}\n")
+            raise Exception(error_msg)
         
         pid = process.pid
         
@@ -575,12 +636,19 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
             process.terminate()
             raise Exception(f"Failed to write PID file: {str(e)}")
         
+        # Đợi một chút để process có thời gian start và ghi log
+        time.sleep(0.5)
+        
         # Đóng file descriptor trong parent process
         # Child process đã có bản copy của file descriptor nên vẫn có thể ghi log
-        log_fd.close()
+        try:
+            log_fd.close()
+        except Exception:
+            # Ignore error khi đóng file descriptor
+            pass
         
-        # Verify process is running sau 2 giây
-        time.sleep(2)
+        # Verify process is running sau 1 giây
+        time.sleep(1)
         
         # Check process status bằng poll() - không raise exception, chỉ return returncode
         returncode = process.poll()
@@ -589,29 +657,39 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
             error_log = ""
             try:
                 with open(log_file, 'r') as f:
-                    error_log = f.read()
-                if error_log:
-                    error_log = error_log[-500:]  # Lấy 500 ký tự cuối
-            except:
-                pass
+                    full_log = f.read()
+                    if full_log:
+                        # Lấy 1000 ký tự cuối để có đủ thông tin
+                        error_log = full_log[-1000:]
+            except Exception as e:
+                error_log = f"Could not read log file: {str(e)}"
             
-            raise Exception(
-                f"Process {pid} started but immediately exited (returncode={returncode}). "
-                f"Check {log_file}. Last log: {error_log}"
-            )
+            # Thêm thông tin về returncode
+            error_summary = f"Process {pid} started but immediately exited (returncode={returncode})"
+            if error_log:
+                error_summary += f"\n\nLast log output:\n{error_log}"
+            
+            raise Exception(f"{error_summary}\n\nCheck full log at: {log_file}")
         
         # Double check bằng os.kill để đảm bảo process thực sự đang chạy
         try:
             os.kill(pid, 0)  # Signal 0 chỉ kiểm tra process có tồn tại không
         except OSError:
-            # Process không tồn tại
+            # Process không tồn tại, đọc log để xem lỗi
             error_log = ""
             try:
                 with open(log_file, 'r') as f:
-                    error_log = f.read()[-500:]
+                    full_log = f.read()
+                    if full_log:
+                        error_log = full_log[-1000:]
             except:
                 pass
-            raise Exception(f"Process {pid} does not exist. Check {log_file}. Last log: {error_log}")
+            
+            error_msg = f"Process {pid} does not exist."
+            if error_log:
+                error_msg += f"\n\nLast log output:\n{error_log}"
+            error_msg += f"\n\nCheck full log at: {log_file}"
+            raise Exception(error_msg)
         
         return {
             'success': True,
@@ -661,7 +739,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
             }
         
         # Remove duplicates
-        pids = list(set(pids))
+        pids = list(set(pids))  
         
         # Kill processes
         killed = []
