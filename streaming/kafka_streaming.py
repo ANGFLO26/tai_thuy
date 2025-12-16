@@ -1,6 +1,7 @@
 import json
 import time
 import sys
+import os
 
 import pandas as pd
 from kafka import KafkaProducer
@@ -8,7 +9,10 @@ from kafka import KafkaProducer
 
 def main():
     print("[STREAM] Loading local CSV file...", file=sys.stdout)
-    csv_path = "/home/labsit-13/tai_thuy/streaming/stream.csv"
+    # Sử dụng đường dẫn tương đối từ thư mục script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(script_dir, "stream.csv")
+    print(f"[STREAM] CSV path: {csv_path}", file=sys.stdout)
     df = pd.read_csv(csv_path)
 
     # Chỉ giữ lại các cột feature + thông tin giao dịch, bỏ cột Class (label)

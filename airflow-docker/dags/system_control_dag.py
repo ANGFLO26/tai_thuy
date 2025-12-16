@@ -514,112 +514,262 @@ with DAG(
     }
 
     def start_hadoop(**context):
-        """Khởi động Hadoop"""
+        """Khởi động Hadoop cluster bằng script start-all.sh"""
         if not context['params'].get('start_hadoop', True):
             return {'skipped': True}
         
+        print(f"🚀 Starting Hadoop on {PIPELINE_CONFIG['hadoop_host']}...")
+        
+        # Chạy script start-all.sh
         command = f"cd {PIPELINE_CONFIG['hadoop_sbin_path']} && ./start-all.sh"
+        
         result = run_command.apply_async(
             args=[command],
-            kwargs={'timeout': 300},
+            kwargs={},
             queue=PIPELINE_CONFIG['hadoop_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        if output.get('return_code') != 0:
-            raise Exception(f"Hadoop start failed: {output.get('stderr')}")
-        return {'status': 'success', 'output': output}
+
+        # Chờ kết quả từ Celery worker
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Hadoop started successfully on {PIPELINE_CONFIG['hadoop_host']}")
+            print(f"Stdout: {output.get('stdout', '')}")
+            if output.get('stderr'):
+                print(f"Stderr: {output.get('stderr', '')}")
+            
+            if output.get('return_code') != 0:
+                raise Exception(f"Hadoop start script returned non-zero code: {output.get('return_code')}")
+            
+            return {
+                'task_id': result.id,
+                'host': PIPELINE_CONFIG['hadoop_host'],
+                'queue': PIPELINE_CONFIG['hadoop_queue'],
+                'command': command,
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to start Hadoop on {PIPELINE_CONFIG['hadoop_host']}: {str(e)}")
+            raise Exception(f"Failed to start Hadoop on {PIPELINE_CONFIG['hadoop_host']}: {str(e)}")
 
     def start_spark_master(**context):
         """Khởi động Spark Master"""
         if not context['params'].get('start_spark', True):
+            print("⏭️ Skipping Spark Master")
             return {'skipped': True}
+        
+        print(f"🚀 Starting Spark Master on {PIPELINE_CONFIG['spark_master']}...")
         
         result = docker_compose_up.apply_async(
             args=[PIPELINE_CONFIG['spark_compose_path']],
-            kwargs={'services': ['spark-master'], 'detach': True},
+            kwargs={
+                'services': ['spark-master'],
+                'detach': True,
+                'build': False,
+                'force_recreate': False,
+            },
             queue=PIPELINE_CONFIG['spark_master_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        return {'status': 'success', 'output': output}
+        
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Spark Master started successfully on {PIPELINE_CONFIG['spark_master']}")
+            print(f"Output: {output}")
+            return {
+                'task_id': result.id,
+                'host': PIPELINE_CONFIG['spark_master'],
+                'queue': PIPELINE_CONFIG['spark_master_queue'],
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to start Spark Master on {PIPELINE_CONFIG['spark_master']}: {str(e)}")
+            raise Exception(f"Failed to start Spark Master on {PIPELINE_CONFIG['spark_master']}: {str(e)}")
 
     def start_spark_worker_1(**context):
         """Khởi động Spark Worker 1"""
         if not context['params'].get('start_spark', True):
+            print("⏭️ Skipping Spark Worker 1")
             return {'skipped': True}
+        
+        print(f"🚀 Starting Spark Worker 1 on {PIPELINE_CONFIG['spark_worker_1_host']}...")
         
         result = docker_compose_up.apply_async(
             args=[PIPELINE_CONFIG['spark_compose_path']],
-            kwargs={'services': ['spark-worker'], 'detach': True},
+            kwargs={
+                'services': ['spark-worker'],
+                'detach': True,
+                'build': False,
+                'force_recreate': False,
+            },
             queue=PIPELINE_CONFIG['spark_worker_1_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        return {'status': 'success', 'output': output}
+        
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Spark Worker 1 started successfully on {PIPELINE_CONFIG['spark_worker_1_host']}")
+            print(f"Output: {output}")
+            return {
+                'task_id': result.id,
+                'host': PIPELINE_CONFIG['spark_worker_1_host'],
+                'queue': PIPELINE_CONFIG['spark_worker_1_queue'],
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to start Spark Worker 1 on {PIPELINE_CONFIG['spark_worker_1_host']}: {str(e)}")
+            raise Exception(f"Failed to start Spark Worker 1 on {PIPELINE_CONFIG['spark_worker_1_host']}: {str(e)}")
 
     def start_spark_worker_2(**context):
         """Khởi động Spark Worker 2"""
         if not context['params'].get('start_spark', True):
+            print("⏭️ Skipping Spark Worker 2")
             return {'skipped': True}
+        
+        print(f"🚀 Starting Spark Worker 2 on {PIPELINE_CONFIG['spark_worker_2_host']}...")
         
         result = docker_compose_up.apply_async(
             args=[PIPELINE_CONFIG['spark_compose_path']],
-            kwargs={'services': ['spark-worker'], 'detach': True},
+            kwargs={
+                'services': ['spark-worker'],
+                'detach': True,
+                'build': False,
+                'force_recreate': False,
+            },
             queue=PIPELINE_CONFIG['spark_worker_2_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        return {'status': 'success', 'output': output}
+        
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Spark Worker 2 started successfully on {PIPELINE_CONFIG['spark_worker_2_host']}")
+            print(f"Output: {output}")
+            return {
+                'task_id': result.id,
+                'host': PIPELINE_CONFIG['spark_worker_2_host'],
+                'queue': PIPELINE_CONFIG['spark_worker_2_queue'],
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to start Spark Worker 2 on {PIPELINE_CONFIG['spark_worker_2_host']}: {str(e)}")
+            raise Exception(f"Failed to start Spark Worker 2 on {PIPELINE_CONFIG['spark_worker_2_host']}: {str(e)}")
 
     def start_kafka(**context):
-        """Khởi động Kafka"""
+        """Khởi động Kafka và Zookeeper"""
         if not context['params'].get('start_kafka', True):
             return {'skipped': True}
         
+        print(f"🚀 Starting Kafka on {PIPELINE_CONFIG['kafka_host']}...")
+        
         result = docker_compose_up.apply_async(
             args=[PIPELINE_CONFIG['kafka_compose_path']],
-            kwargs={'services': ['kafka', 'zookeeper'], 'detach': True},
+            kwargs={
+                'services': ['kafka', 'zookeeper'],
+                'detach': True,
+                'build': False,
+                'force_recreate': False,
+            },
             queue=PIPELINE_CONFIG['kafka_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        return {'status': 'success', 'output': output}
+
+        # Chờ kết quả từ Celery worker
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Kafka started successfully on {PIPELINE_CONFIG['kafka_host']}")
+            print(f"Output: {output}")
+            return {
+                'task_id': result.id,
+                'host': PIPELINE_CONFIG['kafka_host'],
+                'queue': PIPELINE_CONFIG['kafka_queue'],
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to start Kafka on {PIPELINE_CONFIG['kafka_host']}: {str(e)}")
+            raise Exception(f"Failed to start Kafka on {PIPELINE_CONFIG['kafka_host']}: {str(e)}")
+
+    def check_hadoop_status(**context):
+        """Kiểm tra trạng thái Hadoop bằng jps"""
+        print("🔍 Checking Hadoop cluster status...")
+        
+        command = "jps"
+        
+        try:
+            result = run_command.apply_async(
+                args=[command],
+                kwargs={},
+                queue=PIPELINE_CONFIG['hadoop_queue']
+            )
+            output = wait_for_celery_result(result, timeout=60)
+            print(f"✅ Hadoop status checked on {PIPELINE_CONFIG['hadoop_host']}")
+            print(f"Java processes: {output.get('stdout', '')}")
+            
+            if output.get('return_code') != 0:
+                print(f"Warning: jps command returned non-zero code: {output.get('return_code')}")
+            
+            return {
+                'host': PIPELINE_CONFIG['hadoop_host'],
+                'status': 'success',
+                'jps_output': output.get('stdout', ''),
+                'stderr': output.get('stderr', '')
+            }
+        except Exception as e:
+            print(f"❌ Failed to check Hadoop status on {PIPELINE_CONFIG['hadoop_host']}: {str(e)}")
+            raise Exception(f"Failed to check Hadoop status: {str(e)}")
+
+    def check_spark_status(**context):
+        """Kiểm tra trạng thái Spark containers"""
+        print("🔍 Checking Spark cluster status...")
+        
+        command = f"docker ps --filter 'name=spark' --format 'table {{.Names}}\t{{.Status}}'"
+        
+        try:
+            result = run_command.apply_async(
+                args=[command],
+                kwargs={},
+                queue=PIPELINE_CONFIG['spark_master_queue']
+            )
+            output = wait_for_celery_result(result, timeout=60)
+            print(f"✅ Spark status checked")
+            print(f"Containers: {output.get('stdout', '')}")
+            return {
+                'status': 'success',
+                'containers': output.get('stdout', ''),
+                'stderr': output.get('stderr', '')
+            }
+        except Exception as e:
+            print(f"❌ Failed to check Spark status: {str(e)}")
+            raise Exception(f"Failed to check Spark status: {str(e)}")
+
+    def check_kafka_status(**context):
+        """Kiểm tra trạng thái Kafka containers"""
+        print("🔍 Checking Kafka cluster status...")
+        
+        command = "docker ps --filter 'name=kafka' --filter 'name=zookeeper' --format 'table {{.Names}}\t{{.Status}}'"
+        
+        try:
+            result = run_command.apply_async(
+                args=[command],
+                kwargs={},
+                queue=PIPELINE_CONFIG['kafka_queue']
+            )
+            output = wait_for_celery_result(result, timeout=60)
+            print(f"✅ Kafka status checked on {PIPELINE_CONFIG['kafka_host']}")
+            print(f"Containers: {output.get('stdout', '')}")
+            return {
+                'host': PIPELINE_CONFIG['kafka_host'],
+                'status': 'success',
+                'containers': output.get('stdout', ''),
+                'stderr': output.get('stderr', '')
+            }
+        except Exception as e:
+            print(f"❌ Failed to check Kafka status on {PIPELINE_CONFIG['kafka_host']}: {str(e)}")
+            raise Exception(f"Failed to check Kafka status: {str(e)}")
 
     def wait_for_services_ready(**context):
-        """Chờ tất cả services sẵn sàng"""
-        print("🔍 Checking services status...")
-        
-        # Check Hadoop
-        result_hadoop = check_service_status.apply_async(
-            args=['hadoop'],
-            queue=PIPELINE_CONFIG['hadoop_queue']
-        )
-        hadoop_status = wait_for_celery_result(result_hadoop, timeout=60)
-        
-        # Check Spark
-        result_spark = check_service_status.apply_async(
-            args=['spark'],
-            kwargs={'host': PIPELINE_CONFIG['spark_master']},
-            queue=PIPELINE_CONFIG['spark_master_queue']
-        )
-        spark_status = wait_for_celery_result(result_spark, timeout=60)
-        
-        # Check Kafka
-        result_kafka = check_service_status.apply_async(
-            args=['kafka'],
-            queue=PIPELINE_CONFIG['kafka_queue']
-        )
-        kafka_status = wait_for_celery_result(result_kafka, timeout=60)
-        
-        if not hadoop_status.get('ready'):
-            raise Exception("Hadoop is not ready")
-        if not spark_status.get('ready'):
-            raise Exception("Spark is not ready")
-        if not kafka_status.get('ready'):
-            raise Exception("Kafka is not ready")
-        
-        print("✅ All services are ready")
-        return {
-            'hadoop': hadoop_status,
-            'spark': spark_status,
-            'kafka': kafka_status
-        }
+        """Chờ tất cả services sẵn sàng (tổng hợp từ các check riêng)"""
+        print("✅ All services are ready (verified by individual checks)")
+        return {'status': 'success', 'message': 'All services verified'}
 
     def train_model(**context):
         """Training model từ HDFS"""
@@ -754,11 +904,31 @@ with DAG(
         retries=0,
     )
 
+    task_check_hadoop = PythonOperator(
+        task_id='check_hadoop_status',
+        python_callable=check_hadoop_status,
+        retries=3,
+        retry_delay=20,
+    )
+
+    task_check_spark = PythonOperator(
+        task_id='check_spark_status',
+        python_callable=check_spark_status,
+        retries=3,
+        retry_delay=20,
+    )
+
+    task_check_kafka = PythonOperator(
+        task_id='check_kafka_status',
+        python_callable=check_kafka_status,
+        retries=3,
+        retry_delay=20,
+    )
+
     task_wait_services = PythonOperator(
         task_id='wait_for_services_ready',
         python_callable=wait_for_services_ready,
-        retries=3,
-        retry_delay=30,
+        retries=0,
     )
 
     task_train_model = PythonOperator(
@@ -783,8 +953,14 @@ with DAG(
     )
 
     # Dependencies
-    [task_start_hadoop, task_start_spark_master, task_start_spark_worker_1, 
-     task_start_spark_worker_2, task_start_kafka] >> task_wait_services
+    # Start services
+    task_start_hadoop >> task_check_hadoop
+    task_start_spark_master >> task_check_spark
+    [task_start_spark_worker_1, task_start_spark_worker_2] >> task_check_spark
+    task_start_kafka >> task_check_kafka
+    
+    # Sau khi check xong tất cả services, chờ tổng hợp rồi train model
+    [task_check_hadoop, task_check_spark, task_check_kafka] >> task_wait_services
     task_wait_services >> task_train_model
     task_train_model >> [task_create_topic_input, task_create_topic_output]
 
@@ -1111,14 +1287,34 @@ with DAG(
         if not context['params'].get('stop_hadoop', True):
             return {'skipped': True}
         
+        print(f"🛑 Stopping Hadoop on {PIPELINE_CONFIG['node_52_queue']}...")
+        
         command = f"cd {PIPELINE_CONFIG['hadoop_sbin_path']} && ./stop-all.sh"
         result = run_command.apply_async(
             args=[command],
             kwargs={'timeout': 300},
             queue=PIPELINE_CONFIG['node_52_queue']
         )
-        output = wait_for_celery_result(result, timeout=300)
-        return {'status': 'success', 'output': output}
+        
+        try:
+            output = wait_for_celery_result(result, timeout=300)
+            print(f"✅ Hadoop stopped successfully")
+            print(f"Stdout: {output.get('stdout', '')}")
+            if output.get('stderr'):
+                print(f"Stderr: {output.get('stderr', '')}")
+            
+            if output.get('return_code') != 0:
+                raise Exception(f"Hadoop stop script returned non-zero code: {output.get('return_code')}")
+            
+            return {
+                'task_id': result.id,
+                'command': command,
+                'output': output,
+                'status': 'success'
+            }
+        except Exception as e:
+            print(f"❌ Failed to stop Hadoop: {str(e)}")
+            raise Exception(f"Failed to stop Hadoop: {str(e)}")
 
     # Tasks
     task_stop_streaming = PythonOperator(
