@@ -512,10 +512,19 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
     """
     try:
         script_path = os.path.expanduser(script_path)
+        # Đảm bảo script_path là absolute path
+        if not os.path.isabs(script_path):
+            if working_dir:
+                script_path = os.path.join(os.path.expanduser(working_dir), script_path)
+            else:
+                script_path = os.path.abspath(script_path)
+        
         script_name = os.path.basename(script_path).replace('.py', '')
         
         if working_dir:
             working_dir = os.path.expanduser(working_dir)
+            if not os.path.isabs(working_dir):
+                working_dir = os.path.abspath(working_dir)
         else:
             working_dir = os.path.dirname(script_path)
         
@@ -530,49 +539,88 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         if env_vars:
             env.update(env_vars)
         
-        # Build command với nohup
-        cmd = f"cd {working_dir} && nohup python3 {script_path} > {log_file} 2>&1 & echo $! > {pid_file}"
+        # Đảm bảo script_path là absolute path (final check)
+        script_path = os.path.abspath(script_path)
         
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env
-        )
+        # Kiểm tra script có tồn tại không
+        if not os.path.exists(script_path):
+            raise Exception(f"Script not found: {script_path}")
         
-        if result.returncode != 0:
-            raise Exception(f"Failed to start background process: {result.stderr}")
+        # Mở log file để ghi (append mode để không mất log cũ)
+        log_fd = open(log_file, 'a')
         
-        # Read PID
+        # Chạy process với Popen để có thể lấy PID trực tiếp
+        # Sử dụng python3 -u để unbuffered output (quan trọng cho việc xem log real-time)
         try:
-            with open(pid_file, 'r') as f:
-                pid = int(f.read().strip())
-        except:
-            # Try to find process by name
-            find_cmd = f"pgrep -f '{script_name}'"
-            find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
-            if find_result.returncode == 0:
-                pid = int(find_result.stdout.strip().split('\n')[0])
-            else:
-                raise Exception("Could not determine PID")
+            process = subprocess.Popen(
+                ['python3', '-u', script_path],
+                cwd=working_dir,
+                stdout=log_fd,
+                stderr=subprocess.STDOUT,
+                env=env,
+                preexec_fn=os.setsid  # Tạo process group mới để dễ kill sau này
+            )
+        except Exception as e:
+            log_fd.close()
+            raise Exception(f"Failed to start process: {str(e)}")
         
-        # Verify process is running
+        pid = process.pid
+        
+        # Lưu PID vào file
+        try:
+            with open(pid_file, 'w') as f:
+                f.write(str(pid))
+        except Exception as e:
+            log_fd.close()
+            process.terminate()
+            raise Exception(f"Failed to write PID file: {str(e)}")
+        
+        # Đóng file descriptor trong parent process
+        # Child process đã có bản copy của file descriptor nên vẫn có thể ghi log
+        log_fd.close()
+        
+        # Verify process is running sau 2 giây
         time.sleep(2)
+        
+        # Check process status bằng poll() - không raise exception, chỉ return returncode
+        returncode = process.poll()
+        if returncode is not None:
+            # Process đã exit, đọc log để xem lỗi
+            error_log = ""
+            try:
+                with open(log_file, 'r') as f:
+                    error_log = f.read()
+                if error_log:
+                    error_log = error_log[-500:]  # Lấy 500 ký tự cuối
+            except:
+                pass
+            
+            raise Exception(
+                f"Process {pid} started but immediately exited (returncode={returncode}). "
+                f"Check {log_file}. Last log: {error_log}"
+            )
+        
+        # Double check bằng os.kill để đảm bảo process thực sự đang chạy
         try:
-            os.kill(pid, 0)  # Check if process exists
+            os.kill(pid, 0)  # Signal 0 chỉ kiểm tra process có tồn tại không
         except OSError:
-            raise Exception(f"Process {pid} started but immediately exited. Check {log_file}")
+            # Process không tồn tại
+            error_log = ""
+            try:
+                with open(log_file, 'r') as f:
+                    error_log = f.read()[-500:]
+            except:
+                pass
+            raise Exception(f"Process {pid} does not exist. Check {log_file}. Last log: {error_log}")
         
         return {
+            'success': True,
             'status': 'success',
             'pid': pid,
             'pid_file': pid_file,
             'log_file': log_file,
             'script': script_path,
-            'stdout': result.stdout,
-            'stderr': result.stderr
+            'working_dir': working_dir
         }
     except Exception as e:
         raise Exception(f"Failed to start background Python process: {str(e)}")
@@ -622,8 +670,27 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
         
         for pid in pids:
             try:
-                os.kill(pid, signal_num)
-                killed.append(pid)
+                # Kiểm tra process có tồn tại không
+                os.kill(pid, 0)  # Signal 0 chỉ kiểm tra, không kill
+                
+                # Thử kill process group (vì process được tạo với os.setsid)
+                # PID của process chính là process group ID nếu nó là leader
+                try:
+                    pgid = os.getpgid(pid)
+                    # Nếu PID == PGID, process là process group leader
+                    # Ta có thể kill process group an toàn
+                    if pid == pgid:
+                        os.killpg(pgid, signal_num)
+                        killed.append(f"Process group {pid} (leader)")
+                    else:
+                        # Process không phải leader, chỉ kill process đó
+                        os.kill(pid, signal_num)
+                        killed.append(f"Process {pid}")
+                except (ProcessLookupError, OSError):
+                    # Nếu không lấy được process group, chỉ kill process
+                    os.kill(pid, signal_num)
+                    killed.append(f"Process {pid}")
+                
                 time.sleep(1)
             except ProcessLookupError:
                 failed.append(f"PID {pid} not found")
