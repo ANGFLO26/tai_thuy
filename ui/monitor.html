@@ -144,7 +144,7 @@
             const timestamp = data.timestamp || new Date().toISOString();
             const fraudPrediction = parseInt(data.fraud_prediction);
             const fraudScore = parseFloat(data.fraud_score);
-
+            
             predictions.unshift({ 
                 ...data, 
                 timestamp, 

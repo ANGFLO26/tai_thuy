@@ -8,6 +8,7 @@ numpy
 pandas
 pyarrow
 fsspec
+pyspark==4.0.1
 kafka-python
 
 

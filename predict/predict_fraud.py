@@ -30,12 +30,19 @@ CHECKPOINT_LOCATION = "hdfs://192.168.80.52:9000/checkpoints/fraud_prediction"
 
 def create_spark_session() -> SparkSession:
     print("[PREDICT] Creating SparkSession...", file=sys.stdout)
+    # Resource target for this job (Standalone):
+    # - Total cores: 12
+    # - 1 executor x 12 cores (forces allocation on the 12-core worker)
     spark = (
         SparkSession.builder.appName("FraudPredictionStreaming")
+        .config("spark.cores.max", "12")
+        .config("spark.executor.instances", "1")
+        .config("spark.executor.cores", "12")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
     print("[PREDICT] SparkSession created.", file=sys.stdout)
+    print("[PREDICT] Requested resources: cores.max=12, executor.instances=1, executor.cores=12", file=sys.stdout)
     return spark
 
 
