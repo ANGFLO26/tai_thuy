@@ -99,3 +99,6 @@ echo "  cd ~/tai_thuy/ui"
 echo "  python3 server.py"
 echo ""
 
+
+
+

@@ -147,11 +147,13 @@ with DAG(
         print(f"📥 Kafka Input Topic: {PREDICT_CONFIG['kafka_input_topic']} on {PREDICT_CONFIG['kafka_bootstrap']}")
         print(f"📤 Kafka Output Topic: {PREDICT_CONFIG['kafka_output_topic']} on {PREDICT_CONFIG['kafka_bootstrap']}")
         
-        # Spark config
+        # Spark config theo yêu cầu: executor-cores=12, cores.max=12
         spark_conf = {
-            'spark.blockManager.port': '40200',
-            'spark.shuffle.io.port': '40100',
-            'spark.driver.port': '40300',
+            'spark.executor.instances': '1',
+            'spark.cores.max': '12',
+            'spark.blockManager.port': '40210',
+            'spark.shuffle.io.port': '40110',
+            'spark.driver.port': '40310',
             'spark.shuffle.io.connectionTimeout': '600s',
             'spark.network.timeout': '600s',
             'spark.executor.heartbeatInterval': '120s'
@@ -168,6 +170,11 @@ with DAG(
                 'master_url': PREDICT_CONFIG['spark_master_url'],
                 'executor_memory': '4G',
                 'driver_memory': '1G',
+                'executor_cores': 12,
+                'executor_instances': 1,
+                'cores_max': 12,
+                'driver_bind_address': PREDICT_CONFIG['spark_master'],
+                'driver_host': PREDICT_CONFIG['spark_master'],
                 'packages': ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'],
                 'conf': spark_conf,
                 'working_dir': PREDICT_CONFIG['predict_working_dir'],
@@ -304,4 +311,3 @@ with DAG(
     # Check prerequisites -> Start predict -> Check status
     task_check_prerequisites >> task_start_predict >> task_check_status
     # Stop predict is independent (can be triggered separately via params)
-

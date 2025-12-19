@@ -6,7 +6,7 @@ import time
 
 # Import tasks từ system_worker
 from mycelery.system_worker import (
-    run_python_background,
+    spark_submit,
     kill_process,
     check_kafka_topic,
 )
@@ -27,28 +27,30 @@ def wait_for_celery_result(result, timeout=60, poll_interval=2):
     raise TimeoutError(f"Celery task {result.id} timed out after {timeout} seconds")
 
 
-# Cấu hình Streaming
+# Cấu hình Streaming (Spark-based)
 STREAMING_CONFIG = {
     'host': '192.168.80.52',
     'queue': 'node_52',
-    'streaming_dir': '~/tai_thuy/streaming',
-    'streaming_script': 'kafka_streaming.py',
-    'pid_file': '/tmp/kafka_streaming.pid',
-    'log_file': '/tmp/kafka_streaming.log',
+    'spark_master': '192.168.80.52',
+    'spark_master_url': 'spark://192.168.80.52:7077',
+    'streaming_script': '~/tai_thuy/streaming/kafka_streaming.py',
+    'streaming_working_dir': '~/spark/bin',
     'kafka_bootstrap': '192.168.80.122:9092',
     'kafka_topic': 'input',
-    'kafka_queue': 'node_122',  # Queue cho Kafka host
+    'kafka_queue': 'node_122',  # Queue cho Kafka host (check topic)
+    'pid_file': '/tmp/spark_kafka_streaming.pid',
+    'log_file': '/tmp/spark_kafka_streaming.log',
 }
 
 
-# ============== DAG: Test Kafka Streaming ==============
+# ============== DAG: Test Kafka Streaming (Spark-based) ==============
 with DAG(
     dag_id='test_kafka_streaming',
-    description='DAG test streaming dữ liệu vào Kafka topic input',
+    description='DAG test streaming dữ liệu từ HDFS vào Kafka topic input bằng Spark',
     start_date=datetime(2024, 1, 1),
     schedule=None,
     catchup=False,
-    tags=['test', 'streaming', 'kafka'],
+    tags=['test', 'streaming', 'kafka', 'spark'],
     params={
         'start_streaming': Param(True, type='boolean', description='Bắt đầu streaming'),
         'stop_streaming': Param(False, type='boolean', description='Dừng streaming'),
@@ -92,21 +94,52 @@ with DAG(
             raise Exception(f"Topic check failed: {str(e)}")
 
     def start_streaming(**context):
-        """Bắt đầu streaming dữ liệu vào Kafka topic input"""
+        """Bắt đầu Spark streaming job: đọc từ HDFS, ghi vào Kafka topic input"""
         if not context['params'].get('start_streaming', True):
             return {'skipped': True}
         
-        print(f"🚀 Starting Kafka streaming on {STREAMING_CONFIG['host']}...")
+        print(f"🚀 Starting Spark streaming job on {STREAMING_CONFIG['host']}...")
         print(f"Script: {STREAMING_CONFIG['streaming_script']}")
-        print(f"Directory: {STREAMING_CONFIG['streaming_dir']}")
+        print(f"Working directory: {STREAMING_CONFIG['streaming_working_dir']}")
+        print(f"Spark Master: {STREAMING_CONFIG['spark_master_url']}")
         print(f"📡 Kafka Bootstrap Server: {STREAMING_CONFIG['kafka_bootstrap']}")
         print(f"📝 Kafka Topic: {STREAMING_CONFIG['kafka_topic']}")
-        print(f"ℹ️  Script will stream data to topic '{STREAMING_CONFIG['kafka_topic']}' on {STREAMING_CONFIG['kafka_bootstrap']}")
+        print(f"ℹ️  Job will read from HDFS and stream to topic '{STREAMING_CONFIG['kafka_topic']}'")
         
-        result = run_python_background.apply_async(
+        # Spark config theo yêu cầu: executor-cores=8, cores.max=8
+        spark_conf = {
+            'spark.executor.instances': '1',
+            'spark.cores.max': '8',
+            'spark.blockManager.port': '40200',
+            'spark.shuffle.io.port': '40100',
+            'spark.driver.port': '40300',
+            'spark.shuffle.io.connectionTimeout': '600s',
+            'spark.network.timeout': '600s',
+            'spark.executor.heartbeatInterval': '120s'
+        }
+        
+        env_vars = {
+            'JAVA_HOME': '/usr/lib/jvm/java-17-openjdk-amd64',
+            'PATH': '/usr/lib/jvm/java-17-openjdk-amd64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+        }
+        
+        result = spark_submit.apply_async(
             args=[STREAMING_CONFIG['streaming_script']],
             kwargs={
-                'working_dir': STREAMING_CONFIG['streaming_dir'],
+                'master_url': STREAMING_CONFIG['spark_master_url'],
+                'executor_memory': '4G',
+                'driver_memory': '1G',
+                'executor_cores': 8,
+                'executor_instances': 1,
+                'cores_max': 8,
+                'driver_bind_address': STREAMING_CONFIG['spark_master'],
+                'driver_host': STREAMING_CONFIG['spark_master'],
+                'packages': ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'],
+                'conf': spark_conf,
+                'working_dir': STREAMING_CONFIG['streaming_working_dir'],
+                'env_vars': env_vars,
+                'timeout': 3600,
+                'detach': True,  # Chạy ở background vì là streaming job
                 'pid_file': STREAMING_CONFIG['pid_file'],
                 'log_file': STREAMING_CONFIG['log_file'],
             },
@@ -114,20 +147,22 @@ with DAG(
         )
         
         try:
-            output = wait_for_celery_result(result, timeout=60)
-            print(f"✅ Kafka streaming started successfully")
+            output = wait_for_celery_result(result, timeout=120)
+            print(f"✅ Spark streaming job started successfully")
             print(f"Output: {output}")
             
-            if not output.get('success'):
-                raise Exception(f"Failed to start streaming: {output.get('error', 'Unknown error')}")
+            if output.get('status') != 'success':
+                error_msg = output.get('error', output.get('stderr', 'Unknown error'))
+                raise Exception(f"Failed to start streaming job: {error_msg}")
             
             pid = output.get('pid')
             if not pid:
                 raise Exception("PID not returned from background process")
             
-            print(f"📝 Streaming process PID: {pid}")
+            print(f"📝 Spark streaming process PID: {pid}")
             print(f"📝 PID file: {STREAMING_CONFIG['pid_file']}")
             print(f"📝 Log file: {STREAMING_CONFIG['log_file']}")
+            print(f"ℹ️  Job is running in background, streaming from HDFS to '{STREAMING_CONFIG['kafka_topic']}'")
             
             return {
                 'task_id': result.id,
@@ -139,15 +174,15 @@ with DAG(
                 'output': output
             }
         except Exception as e:
-            print(f"❌ Failed to start Kafka streaming: {str(e)}")
-            raise Exception(f"Failed to start Kafka streaming: {str(e)}")
+            print(f"❌ Failed to start Spark streaming job: {str(e)}")
+            raise Exception(f"Failed to start Spark streaming job: {str(e)}")
 
     def stop_streaming(**context):
-        """Dừng streaming process"""
+        """Dừng Spark streaming job"""
         if not context['params'].get('stop_streaming', False):
             return {'skipped': True}
         
-        print(f"🛑 Stopping Kafka streaming...")
+        print(f"🛑 Stopping Spark streaming job...")
         print(f"PID file: {STREAMING_CONFIG['pid_file']}")
         
         result = kill_process.apply_async(
@@ -161,7 +196,7 @@ with DAG(
         
         try:
             output = wait_for_celery_result(result, timeout=60)
-            print(f"✅ Kafka streaming stopped")
+            print(f"✅ Spark streaming job stopped")
             print(f"Output: {output}")
             
             return {
@@ -170,12 +205,12 @@ with DAG(
                 'output': output
             }
         except Exception as e:
-            print(f"❌ Failed to stop Kafka streaming: {str(e)}")
-            raise Exception(f"Failed to stop Kafka streaming: {str(e)}")
+            print(f"❌ Failed to stop Spark streaming job: {str(e)}")
+            raise Exception(f"Failed to stop Spark streaming job: {str(e)}")
 
     def check_streaming_status(**context):
-        """Kiểm tra trạng thái streaming process"""
-        print(f"🔍 Checking streaming status...")
+        """Kiểm tra trạng thái Spark streaming job"""
+        print(f"🔍 Checking Spark streaming job status...")
         print(f"PID file: {STREAMING_CONFIG['pid_file']}")
         print(f"Log file: {STREAMING_CONFIG['log_file']}")
         
@@ -234,4 +269,3 @@ with DAG(
     # Check topic exists first -> Start streaming -> Check status
     task_check_topic >> task_start_streaming >> task_check_status
     # Stop streaming is independent (can be triggered separately via params)
-

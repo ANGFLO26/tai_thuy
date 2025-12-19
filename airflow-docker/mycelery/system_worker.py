@@ -360,6 +360,8 @@ def docker_compose_logs(self, path, service=None, tail=100):
 
 @app.task(bind=True)
 def spark_submit(self, script_path, master_url, executor_memory='4G', driver_memory='1G', 
+                 executor_cores=None, executor_instances=None, cores_max=None,
+                 driver_bind_address=None, driver_host=None,
                  packages=None, conf=None, working_dir=None, env_vars=None, timeout=3600, 
                  detach=False, pid_file=None, log_file=None):
     """Chạy Spark submit với cấu hình đầy đủ
@@ -369,8 +371,13 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         master_url: Spark master URL (vd: spark://192.168.80.52:7077)
         executor_memory: Memory cho executor (mặc định 4G)
         driver_memory: Memory cho driver (mặc định 1G)
+        executor_cores: Số cores cho executor (vd: 8, 12)
+        executor_instances: Số executor instances (vd: 1)
+        cores_max: Tổng số cores tối đa (vd: 8, 12)
+        driver_bind_address: Driver bind address (vd: 192.168.80.52)
+        driver_host: Driver host (vd: 192.168.80.52)
         packages: List packages cần download (vd: ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'])
-        conf: Dictionary các Spark configs
+        conf: Dictionary các Spark configs (sẽ merge với các config khác)
         working_dir: Thư mục làm việc (mặc định ~/spark/bin)
         env_vars: Dictionary các biến môi trường
         timeout: Timeout tính bằng giây (mặc định 3600s)
@@ -399,6 +406,10 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         cmd.extend(['--executor-memory', executor_memory])
         cmd.extend(['--driver-memory', driver_memory])
         
+        # Add executor-cores nếu có
+        if executor_cores:
+            cmd.extend(['--executor-cores', str(executor_cores)])
+        
         # Add packages
         if packages:
             if isinstance(packages, str):
@@ -406,10 +417,26 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
             elif isinstance(packages, list):
                 cmd.extend(['--packages', ','.join(packages)])
         
-        # Add Spark configs
+        # Build Spark configs từ các tham số riêng lẻ và conf dict
+        spark_conf = {}
+        
+        # Thêm config từ tham số riêng lẻ
+        if executor_instances:
+            spark_conf['spark.executor.instances'] = str(executor_instances)
+        if cores_max:
+            spark_conf['spark.cores.max'] = str(cores_max)
+        if driver_bind_address:
+            spark_conf['spark.driver.bindAddress'] = driver_bind_address
+        if driver_host:
+            spark_conf['spark.driver.host'] = driver_host
+        
+        # Merge với conf dict nếu có (conf dict có priority cao hơn)
         if conf:
-            for key, value in conf.items():
-                cmd.extend(['--conf', f'{key}={value}'])
+            spark_conf.update(conf)
+        
+        # Add Spark configs
+        for key, value in spark_conf.items():
+            cmd.extend(['--conf', f'{key}={value}'])
         
         # Add script path
         cmd.append(script_path)
@@ -605,6 +632,37 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         # Mở log file để redirect stdout/stderr của child process
         log_fd = open(log_file, 'a')
         
+        # Ghi thông báo bắt đầu vào log
+        log_fd.write(f"[INFO] Starting Python process: {python_executable} -u {script_path}\n")
+        log_fd.write(f"[INFO] Working directory: {working_dir}\n")
+        log_fd.write(f"[INFO] Environment PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\n")
+        log_fd.flush()  # Đảm bảo ghi ngay lập tức
+        
+        # Test script có thể compile được không (syntax check)
+        try:
+            compile_check = subprocess.run(
+                [python_executable, '-m', 'py_compile', script_path],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            env=env
+        )
+            if compile_check.returncode != 0:
+                error_msg = f"Script syntax error: {compile_check.stderr}"
+                log_fd.write(f"[ERROR] {error_msg}\n")
+                log_fd.flush()
+                log_fd.close()
+                raise Exception(error_msg)
+            log_fd.write(f"[INFO] Script syntax check passed\n")
+            log_fd.flush()
+        except subprocess.TimeoutExpired:
+            log_fd.write(f"[WARNING] Script syntax check timed out, continuing anyway\n")
+            log_fd.flush()
+        except Exception as e:
+            log_fd.write(f"[WARNING] Could not check script syntax: {str(e)}, continuing anyway\n")
+            log_fd.flush()
+        
         # Chạy process với Popen để có thể lấy PID trực tiếp
         # Sử dụng sys.executable để đảm bảo dùng cùng Python environment với Celery worker
         # -u flag để unbuffered output (quan trọng cho việc xem log real-time)
@@ -615,14 +673,16 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 env=env,
-                preexec_fn=os.setsid,  # Tạo process group mới để dễ kill sau này
-                start_new_session=True  # Tách process khỏi parent session
+                preexec_fn=os.setsid  # Tạo process group mới để dễ kill sau này
+                # Không dùng start_new_session=True vì đã có preexec_fn=os.setsid
             )
+            log_fd.write(f"[INFO] Process started with PID: {process.pid}\n")
+            log_fd.flush()
         except Exception as e:
-            log_fd.close()
             error_msg = f"Failed to start process: {str(e)}"
-            with open(log_file, 'a') as f:
-                f.write(f"[ERROR] {error_msg}\n")
+            log_fd.write(f"[ERROR] {error_msg}\n")
+            log_fd.flush()
+            log_fd.close()
             raise Exception(error_msg)
         
         pid = process.pid
@@ -639,16 +699,26 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         # Đợi một chút để process có thời gian start và ghi log
         time.sleep(0.5)
         
+        # Flush log để đảm bảo tất cả output được ghi
+        try:
+            log_fd.flush()
+        except Exception:
+            pass
+        
         # Đóng file descriptor trong parent process
         # Child process đã có bản copy của file descriptor nên vẫn có thể ghi log
+        # NHƯNG: Không đóng ngay, để process có thời gian ghi lỗi nếu có
+        # Chỉ đóng sau khi verify process đang chạy
+        
+        # Verify process is running sau 1.5 giây (tăng thời gian để process có thể ghi lỗi)
+        time.sleep(1.5)
+        
+        # Đóng file descriptor sau khi đã đợi đủ thời gian
         try:
             log_fd.close()
         except Exception:
             # Ignore error khi đóng file descriptor
             pass
-        
-        # Verify process is running sau 1 giây
-        time.sleep(1)
         
         # Check process status bằng poll() - không raise exception, chỉ return returncode
         returncode = process.poll()
@@ -659,8 +729,8 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
                 with open(log_file, 'r') as f:
                     full_log = f.read()
                     if full_log:
-                        # Lấy 1000 ký tự cuối để có đủ thông tin
-                        error_log = full_log[-1000:]
+                        # Lấy 2000 ký tự cuối để có đủ thông tin
+                        error_log = full_log[-2000:]
             except Exception as e:
                 error_log = f"Could not read log file: {str(e)}"
             
@@ -668,7 +738,9 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
             error_summary = f"Process {pid} started but immediately exited (returncode={returncode})"
             if error_log:
                 error_summary += f"\n\nLast log output:\n{error_log}"
-            
+            else:
+                error_summary += f"\n\nNo log output found. Check if log file exists: {log_file}"
+        
             raise Exception(f"{error_summary}\n\nCheck full log at: {log_file}")
         
         # Double check bằng os.kill để đảm bảo process thực sự đang chạy
@@ -681,13 +753,15 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
                 with open(log_file, 'r') as f:
                     full_log = f.read()
                     if full_log:
-                        error_log = full_log[-1000:]
+                        error_log = full_log[-2000:]
             except:
                 pass
             
             error_msg = f"Process {pid} does not exist."
             if error_log:
                 error_msg += f"\n\nLast log output:\n{error_log}"
+            else:
+                error_msg += f"\n\nNo log output found. Check if log file exists: {log_file}"
             error_msg += f"\n\nCheck full log at: {log_file}"
             raise Exception(error_msg)
         
@@ -739,7 +813,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
             }
         
         # Remove duplicates
-        pids = list(set(pids))  
+        pids = list(set(pids))
         
         # Kill processes
         killed = []
@@ -762,7 +836,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
                         killed.append(f"Process group {pid} (leader)")
                     else:
                         # Process không phải leader, chỉ kill process đó
-                        os.kill(pid, signal_num)
+                os.kill(pid, signal_num)
                         killed.append(f"Process {pid}")
                 except (ProcessLookupError, OSError):
                     # Nếu không lấy được process group, chỉ kill process
