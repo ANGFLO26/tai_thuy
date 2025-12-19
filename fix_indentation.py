@@ -1,4 +1,12 @@
-from celery import Celery
+#!/usr/bin/env python3
+"""
+Script để sửa các lỗi indentation trong system_worker.py từ máy node_130
+"""
+
+import re
+
+# Đọc file từ code người dùng gửi
+code = """from celery import Celery
 import subprocess
 import os
 import signal
@@ -39,14 +47,14 @@ CLUSTER_NODES = {
 
 @app.task(bind=True)
 def run_command(self, command, env_vars=None, timeout=300, working_dir=None):
-    """Chạy một lệnh shell
+    \"\"\"Chạy một lệnh shell
     
     Args:
         command: Lệnh shell cần chạy
         env_vars: Dictionary các biến môi trường
         timeout: Timeout tính bằng giây (mặc định 300s)
         working_dir: Thư mục làm việc (mặc định None)
-    """
+    \"\"\"
     try:
         env = os.environ.copy()
         if env_vars:
@@ -81,7 +89,7 @@ def run_command(self, command, env_vars=None, timeout=300, working_dir=None):
 
 @app.task(bind=True)
 def docker_run(self, image, container_name=None, ports=None, volumes=None, env_vars=None, detach=True):
-    """Chạy Docker container"""
+    \"\"\"Chạy Docker container\"\"\"
     try:
         cmd = ['docker', 'run']
 
@@ -98,7 +106,6 @@ def docker_run(self, image, container_name=None, ports=None, volumes=None, env_v
         if volumes:
             for volume in volumes:
                 cmd.extend(['-v', volume])
-
         if env_vars:
             for key, value in env_vars.items():
                 cmd.extend(['-e', f'{key}={value}'])
@@ -126,7 +133,7 @@ def docker_run(self, image, container_name=None, ports=None, volumes=None, env_v
 
 @app.task(bind=True)
 def docker_stop(self, container_name):
-    """Dừng Docker container"""
+    \"\"\"Dừng Docker container\"\"\"
     try:
         result = subprocess.run(
             ['docker', 'stop', container_name],
@@ -148,7 +155,7 @@ def docker_stop(self, container_name):
 
 @app.task(bind=True)
 def docker_remove(self, container_name):
-    """Xóa Docker container"""
+    \"\"\"Xóa Docker container\"\"\"
     try:
         result = subprocess.run(
             ['docker', 'rm', container_name],
@@ -170,7 +177,7 @@ def docker_remove(self, container_name):
 
 @app.task(bind=True)
 def docker_ps(self, all_containers=False):
-    """Liệt kê Docker containers"""
+    \"\"\"Liệt kê Docker containers\"\"\"
     try:
         cmd = ['docker', 'ps']
         if all_containers:
@@ -196,7 +203,7 @@ def docker_ps(self, all_containers=False):
 
 @app.task(bind=True)
 def docker_compose_up(self, path, services=None, detach=True, build=False, force_recreate=False):
-    """Chạy docker-compose up với path được chỉ định
+    \"\"\"Chạy docker-compose up với path được chỉ định
 
     Args:
         path: Đường dẫn file docker-compose.yml
@@ -204,7 +211,7 @@ def docker_compose_up(self, path, services=None, detach=True, build=False, force
         detach: Chạy ở chế độ background
         build: Build images trước khi start
         force_recreate: Force recreate containers
-    """
+    \"\"\"
     # Expand ~ thành home directory
     path = os.path.expanduser(path)
     cmd = ['docker', 'compose', '-f', path, 'up']
@@ -249,14 +256,14 @@ def docker_compose_up(self, path, services=None, detach=True, build=False, force
 
 @app.task(bind=True)
 def docker_compose_down(self, path, services=None, volumes=False, remove_orphans=False):
-    """Dừng và xóa containers với docker-compose down
+    \"\"\"Dừng và xóa containers với docker-compose down
 
     Args:
         path: Đường dẫn file docker-compose.yml
         services: Service cụ thể hoặc list services (để trống = tất cả)
         volumes: Xóa volumes
         remove_orphans: Xóa orphan containers
-    """
+    \"\"\"
     # Expand ~ thành home directory
     path = os.path.expanduser(path)
 
@@ -299,7 +306,7 @@ def docker_compose_down(self, path, services=None, volumes=False, remove_orphans
 
 @app.task(bind=True)
 def docker_compose_ps(self, path):
-    """Liệt kê containers của docker-compose"""
+    \"\"\"Liệt kê containers của docker-compose\"\"\"
     # Expand ~ thành home directory
     path = os.path.expanduser(path)
     cmd = ['docker', 'compose', '-f', path, 'ps']
@@ -328,7 +335,7 @@ def docker_compose_ps(self, path):
 
 @app.task(bind=True)
 def docker_compose_logs(self, path, service=None, tail=100):
-    """Lấy logs từ docker-compose"""
+    \"\"\"Lấy logs từ docker-compose\"\"\"
     # Expand ~ thành home directory
     path = os.path.expanduser(path)
     cmd = ['docker', 'compose', '-f', path, 'logs', '--tail', str(tail)]
@@ -362,7 +369,7 @@ def docker_compose_logs(self, path, service=None, tail=100):
 def spark_submit(self, script_path, master_url, executor_memory='4G', driver_memory='1G', 
                  packages=None, conf=None, working_dir=None, env_vars=None, timeout=3600, 
                  detach=False, pid_file=None, log_file=None):
-    """Chạy Spark submit với cấu hình đầy đủ
+    \"\"\"Chạy Spark submit với cấu hình đầy đủ
     
     Args:
         script_path: Đường dẫn đến Spark script
@@ -377,7 +384,7 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         detach: Chạy ở background (mặc định False)
         pid_file: File để lưu PID nếu detach=True
         log_file: File để lưu log nếu detach=True
-    """
+    \"\"\"
     try:
         # Expand paths
         script_path = os.path.expanduser(script_path)
@@ -399,10 +406,6 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         cmd.extend(['--executor-memory', executor_memory])
         cmd.extend(['--driver-memory', driver_memory])
         
-        # Add executor-cores if specified in conf
-        if conf and 'spark.executor.cores' in conf:
-            cmd.extend(['--executor-cores', str(conf['spark.executor.cores'])])
-        
         # Add packages
         if packages:
             if isinstance(packages, str):
@@ -413,9 +416,7 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         # Add Spark configs
         if conf:
             for key, value in conf.items():
-                # Skip spark.executor.cores vì đã được thêm bằng --executor-cores
-                if key != 'spark.executor.cores':
-                    cmd.extend(['--conf', f'{key}={value}'])
+                cmd.extend(['--conf', f'{key}={value}'])
         
         # Add script path
         cmd.append(script_path)
@@ -454,7 +455,7 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
                 find_cmd = f"pgrep -f '{script_name}'"
                 find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
                 if find_result.returncode == 0:
-                    pid = int(find_result.stdout.strip().split('\n')[0])
+                    pid = int(find_result.stdout.strip().split('\\n')[0])
                 else:
                     raise Exception("Could not determine PID")
             
@@ -508,7 +509,7 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
 @app.task(bind=True)
 def run_python_background(self, script_path, working_dir=None, env_vars=None, 
                          pid_file=None, log_file=None):
-    """Chạy Python script ở background và lưu PID
+    \"\"\"Chạy Python script ở background và lưu PID
     
     Args:
         script_path: Đường dẫn đến Python script
@@ -516,7 +517,7 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         env_vars: Dictionary các biến môi trường
         pid_file: Đường dẫn file để lưu PID (mặc định /tmp/{script_name}.pid)
         log_file: Đường dẫn file log (mặc định /tmp/{script_name}.log)
-    """
+    \"\"\"
     try:
         script_path = os.path.expanduser(script_path)
         # Đảm bảo script_path là absolute path
@@ -593,28 +594,28 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
         # Mở log file để ghi (append mode để không mất log cũ)
         # Ghi thông tin debug vào log trước khi start process
         with open(log_file, 'a') as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"[DEBUG] Starting process at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"[DEBUG] Script: {script_path}\n")
-            f.write(f"[DEBUG] Working dir: {working_dir}\n")
-            f.write(f"[DEBUG] Python executable: {python_executable}\n")
-            f.write(f"[DEBUG] Python version: {python_version}\n")
-            f.write(f"[DEBUG] Python path: {python_path}\n")
-            f.write(f"[DEBUG] PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\n")
-            f.write(f"[DEBUG] PID file: {pid_file}\n")
-            f.write(f"[DEBUG] Current user: {os.getenv('USER', 'unknown')}\n")
-            f.write(f"[DEBUG] Current directory: {os.getcwd()}\n")
-            f.write(f"[DEBUG] Script exists: {os.path.exists(script_path)}\n")
-            f.write(f"[DEBUG] Working dir exists: {os.path.exists(working_dir)}\n")
-            f.write(f"{'='*60}\n")
+            f.write(f"\\n{'='*60}\\n")
+            f.write(f"[DEBUG] Starting process at {time.strftime('%Y-%m-%d %H:%M:%S')}\\n")
+            f.write(f"[DEBUG] Script: {script_path}\\n")
+            f.write(f"[DEBUG] Working dir: {working_dir}\\n")
+            f.write(f"[DEBUG] Python executable: {python_executable}\\n")
+            f.write(f"[DEBUG] Python version: {python_version}\\n")
+            f.write(f"[DEBUG] Python path: {python_path}\\n")
+            f.write(f"[DEBUG] PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\\n")
+            f.write(f"[DEBUG] PID file: {pid_file}\\n")
+            f.write(f"[DEBUG] Current user: {os.getenv('USER', 'unknown')}\\n")
+            f.write(f"[DEBUG] Current directory: {os.getcwd()}\\n")
+            f.write(f"[DEBUG] Script exists: {os.path.exists(script_path)}\\n")
+            f.write(f"[DEBUG] Working dir exists: {os.path.exists(working_dir)}\\n")
+            f.write(f"{'='*60}\\n")
         
         # Mở log file để redirect stdout/stderr của child process
         log_fd = open(log_file, 'a')
         
         # Ghi thông báo bắt đầu vào log
-        log_fd.write(f"[INFO] Starting Python process: {python_executable} -u {script_path}\n")
-        log_fd.write(f"[INFO] Working directory: {working_dir}\n")
-        log_fd.write(f"[INFO] Environment PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\n")
+        log_fd.write(f"[INFO] Starting Python process: {python_executable} -u {script_path}\\n")
+        log_fd.write(f"[INFO] Working directory: {working_dir}\\n")
+        log_fd.write(f"[INFO] Environment PYTHONPATH: {env.get('PYTHONPATH', 'Not set')}\\n")
         log_fd.flush()  # Đảm bảo ghi ngay lập tức
         
         # Test script có thể compile được không (syntax check)
@@ -625,21 +626,21 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
                 capture_output=True,
                 text=True,
                 timeout=10,
-            env=env
-        )
+                env=env
+            )
             if compile_check.returncode != 0:
                 error_msg = f"Script syntax error: {compile_check.stderr}"
-                log_fd.write(f"[ERROR] {error_msg}\n")
+                log_fd.write(f"[ERROR] {error_msg}\\n")
                 log_fd.flush()
                 log_fd.close()
                 raise Exception(error_msg)
-            log_fd.write(f"[INFO] Script syntax check passed\n")
+            log_fd.write(f"[INFO] Script syntax check passed\\n")
             log_fd.flush()
         except subprocess.TimeoutExpired:
-            log_fd.write(f"[WARNING] Script syntax check timed out, continuing anyway\n")
+            log_fd.write(f"[WARNING] Script syntax check timed out, continuing anyway\\n")
             log_fd.flush()
         except Exception as e:
-            log_fd.write(f"[WARNING] Could not check script syntax: {str(e)}, continuing anyway\n")
+            log_fd.write(f"[WARNING] Could not check script syntax: {str(e)}, continuing anyway\\n")
             log_fd.flush()
         
         # Chạy process với Popen để có thể lấy PID trực tiếp
@@ -655,11 +656,11 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
                 preexec_fn=os.setsid  # Tạo process group mới để dễ kill sau này
                 # Không dùng start_new_session=True vì đã có preexec_fn=os.setsid
             )
-            log_fd.write(f"[INFO] Process started with PID: {process.pid}\n")
+            log_fd.write(f"[INFO] Process started with PID: {process.pid}\\n")
             log_fd.flush()
         except Exception as e:
             error_msg = f"Failed to start process: {str(e)}"
-            log_fd.write(f"[ERROR] {error_msg}\n")
+            log_fd.write(f"[ERROR] {error_msg}\\n")
             log_fd.flush()
             log_fd.close()
             raise Exception(error_msg)
@@ -716,11 +717,11 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
             # Thêm thông tin về returncode
             error_summary = f"Process {pid} started but immediately exited (returncode={returncode})"
             if error_log:
-                error_summary += f"\n\nLast log output:\n{error_log}"
+                error_summary += f"\\n\\nLast log output:\\n{error_log}"
             else:
-                error_summary += f"\n\nNo log output found. Check if log file exists: {log_file}"
+                error_summary += f"\\n\\nNo log output found. Check if log file exists: {log_file}"
         
-            raise Exception(f"{error_summary}\n\nCheck full log at: {log_file}")
+            raise Exception(f"{error_summary}\\n\\nCheck full log at: {log_file}")
         
         # Double check bằng os.kill để đảm bảo process thực sự đang chạy
         try:
@@ -738,10 +739,10 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
             
             error_msg = f"Process {pid} does not exist."
             if error_log:
-                error_msg += f"\n\nLast log output:\n{error_log}"
+                error_msg += f"\\n\\nLast log output:\\n{error_log}"
             else:
-                error_msg += f"\n\nNo log output found. Check if log file exists: {log_file}"
-            error_msg += f"\n\nCheck full log at: {log_file}"
+                error_msg += f"\\n\\nNo log output found. Check if log file exists: {log_file}"
+            error_msg += f"\\n\\nCheck full log at: {log_file}"
             raise Exception(error_msg)
         
         return {
@@ -759,13 +760,13 @@ def run_python_background(self, script_path, working_dir=None, env_vars=None,
 
 @app.task(bind=True)
 def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
-    """Kill process từ PID file hoặc process name
+    \"\"\"Kill process từ PID file hoặc process name
     
     Args:
         pid_file: Đường dẫn file chứa PID
         process_name: Tên process để tìm (vd: 'kafka_streaming.py')
         signal_type: Loại signal ('TERM' hoặc 'KILL')
-    """
+    \"\"\"
     try:
         pids = []
         
@@ -782,7 +783,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
             find_cmd = f"pgrep -f '{process_name}'"
             find_result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
             if find_result.returncode == 0:
-                found_pids = [int(p) for p in find_result.stdout.strip().split('\n') if p]
+                found_pids = [int(p) for p in find_result.stdout.strip().split('\\n') if p]
                 pids.extend(found_pids)
         
         if not pids:
@@ -849,13 +850,13 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
 
 @app.task(bind=True)
 def check_service_status(self, service_type, host=None, port=None):
-    """Kiểm tra service đã sẵn sàng chưa
+    \"\"\"Kiểm tra service đã sẵn sàng chưa
     
     Args:
         service_type: Loại service ('hadoop', 'spark', 'kafka', 'hdfs')
         host: Host của service (mặc định lấy từ CLUSTER_NODES)
         port: Port của service
-    """
+    \"\"\"
     try:
         if service_type == 'hadoop':
             # Check Hadoop Namenode bằng jps
@@ -903,11 +904,11 @@ def check_service_status(self, service_type, host=None, port=None):
 
 @app.task(bind=True)
 def check_hdfs_path(self, hdfs_path):
-    """Kiểm tra path trong HDFS có tồn tại không
+    \"\"\"Kiểm tra path trong HDFS có tồn tại không
     
     Args:
         hdfs_path: Đường dẫn HDFS (vd: hdfs://192.168.80.52:9000/model)
-    """
+    \"\"\"
     try:
         cmd = f"hdfs dfs -test -e {hdfs_path}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
@@ -925,12 +926,12 @@ def check_hdfs_path(self, hdfs_path):
 
 @app.task(bind=True)
 def check_kafka_topic(self, bootstrap_server, topic_name):
-    """Kiểm tra Kafka topic có tồn tại không
+    \"\"\"Kiểm tra Kafka topic có tồn tại không
     
     Args:
         bootstrap_server: Kafka bootstrap server (vd: 192.168.80.122:9092)
         topic_name: Tên topic cần kiểm tra
-    """
+    \"\"\"
     try:
         cmd = (
             f"docker exec -i kafka kafka-topics "
@@ -950,3 +951,48 @@ def check_kafka_topic(self, bootstrap_server, topic_name):
         }
     except Exception as e:
         raise Exception(f"Failed to check Kafka topic: {str(e)}")
+"""
+
+# Sửa các lỗi indentation
+fixed_code = code
+
+# Sửa lỗi 1: if env_vars thiếu indentation
+fixed_code = re.sub(r'(\s+if volumes:\s+for volume in volumes:\s+cmd\.extend\(\[\'-v\', volume\]\))\nif env_vars:', r'\1\n        if env_vars:', fixed_code)
+
+# Sửa lỗi 2: cmd.append('-d') thiếu indentation  
+fixed_code = re.sub(r'(\s+if detach:)\ncmd\.append\(', r'\1\n        cmd.append(', fixed_code)
+
+# Sửa lỗi 3: log_file thiếu indentation
+fixed_code = re.sub(r'(\s+if not log_file:)\nlog_file =', r'\1\n            log_file =', fixed_code)
+
+# Sửa lỗi 4: python_executable thiếu indentation
+fixed_code = re.sub(r'(\s+# Xác định Python interpreter để dùng.*?)\npython_executable =', r'\1\n        python_executable =', fixed_code, flags=re.DOTALL)
+
+# Sửa lỗi 5: log_fd.flush() thiếu indentation
+fixed_code = re.sub(r'(\s+log_fd\.write\(f\"\[INFO\] Environment PYTHONPATH.*?\))\nlog_fd\.flush\(\)', r'\1\n        log_fd.flush()', fixed_code, flags=re.DOTALL)
+
+# Sửa lỗi 6: env=env thiếu indentation
+fixed_code = re.sub(r'(\s+timeout=10,)\nenv=env', r'\1\n                env=env', fixed_code)
+
+# Sửa lỗi 7: time.sleep(1.5) thiếu indentation
+fixed_code = re.sub(r'(\s+# Chỉ đóng sau khi verify process đang chạy)\ntime\.sleep\(1\.5\)', r'\1\n        \n        # Verify process is running sau 1.5 giây (tăng thời gian để process có thể ghi lỗi)\n        time.sleep(1.5)', fixed_code)
+
+# Sửa lỗi 8: signal_type docstring thiếu indentation
+fixed_code = re.sub(r'(\s+process_name: Tên process để tìm.*?)\nsignal_type:', r'\1\n        signal_type:', fixed_code, flags=re.DOTALL)
+
+# Sửa lỗi 9: os.kill trong else block thiếu indentation
+fixed_code = re.sub(r'(\s+else:\s+# Process không phải leader, chỉ kill process đó)\nos\.kill\(pid, signal_num\)\s+killed\.append\(f"Process \{pid\}"\)', r'\1\n                        os.kill(pid, signal_num)\n                        killed.append(f"Process {pid}")', fixed_code)
+
+# Sửa lỗi 10: result = subprocess.run trong check_hdfs_path thiếu indentation
+fixed_code = re.sub(r'(\s+cmd = f"hdfs dfs -test -e \{hdfs_path\}")\nresult =', r'\1\n        result =', fixed_code)
+
+# Sửa lỗi 11: 'signal': signal_type thiếu indentation
+fixed_code = re.sub(r'(\s+\'failed\': failed,)\n\'signal\':', r'\1\n            \'signal\':', fixed_code)
+
+# Ghi file đã sửa
+with open('/home/labsit/tai_thuy/airflow-docker/mycelery/system_worker_fixed.py', 'w') as f:
+    f.write(fixed_code)
+
+print("File đã được sửa và lưu tại: /home/labsit/tai_thuy/airflow-docker/mycelery/system_worker_fixed.py")
+print("Bạn có thể copy file này sang máy node_130")
+

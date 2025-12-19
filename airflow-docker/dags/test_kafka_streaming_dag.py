@@ -107,7 +107,9 @@ with DAG(
         print(f"ℹ️  Job will read from HDFS and stream to topic '{STREAMING_CONFIG['kafka_topic']}'")
         
         # Spark config theo yêu cầu: executor-cores=8, cores.max=8
+        # executor-cores được thêm vào conf với key 'spark.executor.cores' để function tự động thêm --executor-cores flag
         spark_conf = {
+            'spark.executor.cores': '8',  # Sẽ được convert thành --executor-cores flag
             'spark.executor.instances': '1',
             'spark.cores.max': '8',
             'spark.blockManager.port': '40200',
@@ -129,11 +131,6 @@ with DAG(
                 'master_url': STREAMING_CONFIG['spark_master_url'],
                 'executor_memory': '4G',
                 'driver_memory': '1G',
-                'executor_cores': 8,
-                'executor_instances': 1,
-                'cores_max': 8,
-                'driver_bind_address': STREAMING_CONFIG['spark_master'],
-                'driver_host': STREAMING_CONFIG['spark_master'],
                 'packages': ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'],
                 'conf': spark_conf,
                 'working_dir': STREAMING_CONFIG['streaming_working_dir'],
