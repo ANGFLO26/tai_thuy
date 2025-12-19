@@ -836,7 +836,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
                         killed.append(f"Process group {pid} (leader)")
                     else:
                         # Process không phải leader, chỉ kill process đó
-                os.kill(pid, signal_num)
+                        os.kill(pid, signal_num)
                         killed.append(f"Process {pid}")
                 except (ProcessLookupError, OSError):
                     # Nếu không lấy được process group, chỉ kill process
