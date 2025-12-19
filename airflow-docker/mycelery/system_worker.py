@@ -360,8 +360,6 @@ def docker_compose_logs(self, path, service=None, tail=100):
 
 @app.task(bind=True)
 def spark_submit(self, script_path, master_url, executor_memory='4G', driver_memory='1G', 
-                 executor_cores=None, executor_instances=None, cores_max=None,
-                 driver_bind_address=None, driver_host=None,
                  packages=None, conf=None, working_dir=None, env_vars=None, timeout=3600, 
                  detach=False, pid_file=None, log_file=None):
     """Chạy Spark submit với cấu hình đầy đủ
@@ -371,13 +369,8 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         master_url: Spark master URL (vd: spark://192.168.80.52:7077)
         executor_memory: Memory cho executor (mặc định 4G)
         driver_memory: Memory cho driver (mặc định 1G)
-        executor_cores: Số cores cho executor (vd: 8, 12)
-        executor_instances: Số executor instances (vd: 1)
-        cores_max: Tổng số cores tối đa (vd: 8, 12)
-        driver_bind_address: Driver bind address (vd: 192.168.80.52)
-        driver_host: Driver host (vd: 192.168.80.52)
         packages: List packages cần download (vd: ['org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1'])
-        conf: Dictionary các Spark configs (sẽ merge với các config khác)
+        conf: Dictionary các Spark configs
         working_dir: Thư mục làm việc (mặc định ~/spark/bin)
         env_vars: Dictionary các biến môi trường
         timeout: Timeout tính bằng giây (mặc định 3600s)
@@ -406,10 +399,6 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
         cmd.extend(['--executor-memory', executor_memory])
         cmd.extend(['--driver-memory', driver_memory])
         
-        # Add executor-cores nếu có
-        if executor_cores:
-            cmd.extend(['--executor-cores', str(executor_cores)])
-        
         # Add packages
         if packages:
             if isinstance(packages, str):
@@ -417,26 +406,10 @@ def spark_submit(self, script_path, master_url, executor_memory='4G', driver_mem
             elif isinstance(packages, list):
                 cmd.extend(['--packages', ','.join(packages)])
         
-        # Build Spark configs từ các tham số riêng lẻ và conf dict
-        spark_conf = {}
-        
-        # Thêm config từ tham số riêng lẻ
-        if executor_instances:
-            spark_conf['spark.executor.instances'] = str(executor_instances)
-        if cores_max:
-            spark_conf['spark.cores.max'] = str(cores_max)
-        if driver_bind_address:
-            spark_conf['spark.driver.bindAddress'] = driver_bind_address
-        if driver_host:
-            spark_conf['spark.driver.host'] = driver_host
-        
-        # Merge với conf dict nếu có (conf dict có priority cao hơn)
-        if conf:
-            spark_conf.update(conf)
-        
         # Add Spark configs
-        for key, value in spark_conf.items():
-            cmd.extend(['--conf', f'{key}={value}'])
+        if conf:
+            for key, value in conf.items():
+                cmd.extend(['--conf', f'{key}={value}'])
         
         # Add script path
         cmd.append(script_path)
@@ -836,7 +809,7 @@ def kill_process(self, pid_file=None, process_name=None, signal_type='TERM'):
                         killed.append(f"Process group {pid} (leader)")
                     else:
                         # Process không phải leader, chỉ kill process đó
-                        os.kill(pid, signal_num)
+                os.kill(pid, signal_num)
                         killed.append(f"Process {pid}")
                 except (ProcessLookupError, OSError):
                     # Nếu không lấy được process group, chỉ kill process
