@@ -232,8 +232,47 @@ with DAG(
             print(f"❌ Failed to start Spark Worker 2 on {FULL_PIPELINE_CONFIG['spark_worker_2_host']}: {str(e)}")
             raise Exception(f"Failed to start Spark Worker 2 on {FULL_PIPELINE_CONFIG['spark_worker_2_host']}: {str(e)}")
 
+    def create_kafka_topic_if_not_exists(topic_name, bootstrap_server, queue, partitions=1, replication_factor=1):
+        """Tạo Kafka topic nếu chưa tồn tại"""
+        print(f"🔧 Creating Kafka topic '{topic_name}' if not exists...")
+        print(f"Bootstrap server: {bootstrap_server}")
+        print(f"Partitions: {partitions}, Replication factor: {replication_factor}")
+        
+        command = (
+            f"docker exec -i kafka kafka-topics "
+            f"--create "
+            f"--topic {topic_name} "
+            f"--bootstrap-server {bootstrap_server} "
+            f"--partitions {partitions} "
+            f"--replication-factor {replication_factor}"
+        )
+        
+        result = run_command.apply_async(
+            args=[command],
+            kwargs={},
+            queue=queue
+        )
+        
+        try:
+            output = wait_for_celery_result(result, timeout=60)
+            
+            # Nếu topic đã tồn tại thì OK (không phải lỗi)
+            if output.get('return_code') != 0:
+                stderr = output.get('stderr', '')
+                if 'already exists' in stderr.lower():
+                    print(f"ℹ️  Topic '{topic_name}' already exists (this is OK)")
+                    return True
+                else:
+                    raise Exception(f"Failed to create topic '{topic_name}': {stderr}")
+            
+            print(f"✅ Topic '{topic_name}' created successfully")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to create topic '{topic_name}': {str(e)}")
+            raise Exception(f"Failed to create topic '{topic_name}': {str(e)}")
+
     def start_kafka(**context):
-        """Khởi động Kafka - Từ test_full_pipeline_dag.py"""
+        """Khởi động Kafka và tự động tạo topics input và output"""
         if not context['params'].get('start_infrastructure', True):
             return {'skipped': True}
         
@@ -254,12 +293,44 @@ with DAG(
             output = wait_for_celery_result(result, timeout=300)
             print(f"✅ Kafka started successfully on {FULL_PIPELINE_CONFIG['kafka_host']}")
             print(f"Output: {output}")
+            
+            # Chờ một chút để Kafka sẵn sàng nhận lệnh tạo topic
+            print("⏳ Waiting for Kafka to be ready before creating topics...")
+            time.sleep(15)
+            
+            # Tự động tạo hai topic input và output
+            print("🔧 Creating Kafka topics: 'input' and 'output'...")
+            
+            # Tạo topic input
+            create_kafka_topic_if_not_exists(
+                topic_name=FULL_PIPELINE_CONFIG['kafka_input_topic'],
+                bootstrap_server=FULL_PIPELINE_CONFIG['kafka_bootstrap'],
+                queue=FULL_PIPELINE_CONFIG['kafka_queue'],
+                partitions=FULL_PIPELINE_CONFIG['kafka_topic_partitions'],
+                replication_factor=FULL_PIPELINE_CONFIG['kafka_topic_replication_factor']
+            )
+            
+            # Tạo topic output
+            create_kafka_topic_if_not_exists(
+                topic_name=FULL_PIPELINE_CONFIG['kafka_output_topic'],
+                bootstrap_server=FULL_PIPELINE_CONFIG['kafka_bootstrap'],
+                queue=FULL_PIPELINE_CONFIG['kafka_queue'],
+                partitions=FULL_PIPELINE_CONFIG['kafka_topic_partitions'],
+                replication_factor=FULL_PIPELINE_CONFIG['kafka_topic_replication_factor']
+            )
+            
+            print(f"✅ Kafka topics '{FULL_PIPELINE_CONFIG['kafka_input_topic']}' and '{FULL_PIPELINE_CONFIG['kafka_output_topic']}' created/verified")
+            
             return {
                 'task_id': result.id,
                 'host': FULL_PIPELINE_CONFIG['kafka_host'],
                 'queue': FULL_PIPELINE_CONFIG['kafka_queue'],
                 'output': output,
-                'status': 'success'
+                'status': 'success',
+                'topics_created': [
+                    FULL_PIPELINE_CONFIG['kafka_input_topic'],
+                    FULL_PIPELINE_CONFIG['kafka_output_topic']
+                ]
             }
         except Exception as e:
             print(f"❌ Failed to start Kafka on {FULL_PIPELINE_CONFIG['kafka_host']}: {str(e)}")
@@ -463,45 +534,6 @@ with DAG(
             raise Exception(f"Failed to verify model: {str(e)}")
 
     # ========== PHASE 4: Check Kafka Topics ==========
-    
-    def create_kafka_topic_if_not_exists(topic_name, bootstrap_server, queue, partitions=1, replication_factor=1):
-        """Tạo Kafka topic nếu chưa tồn tại"""
-        print(f"🔧 Creating Kafka topic '{topic_name}' if not exists...")
-        print(f"Bootstrap server: {bootstrap_server}")
-        print(f"Partitions: {partitions}, Replication factor: {replication_factor}")
-        
-        command = (
-            f"docker exec -i kafka kafka-topics "
-            f"--create "
-            f"--topic {topic_name} "
-            f"--bootstrap-server {bootstrap_server} "
-            f"--partitions {partitions} "
-            f"--replication-factor {replication_factor}"
-        )
-        
-        result = run_command.apply_async(
-            args=[command],
-            kwargs={},
-            queue=queue
-        )
-        
-        try:
-            output = wait_for_celery_result(result, timeout=60)
-            
-            # Nếu topic đã tồn tại thì OK (không phải lỗi)
-            if output.get('return_code') != 0:
-                stderr = output.get('stderr', '')
-                if 'already exists' in stderr.lower():
-                    print(f"ℹ️  Topic '{topic_name}' already exists (this is OK)")
-                    return True
-                else:
-                    raise Exception(f"Failed to create topic '{topic_name}': {stderr}")
-            
-            print(f"✅ Topic '{topic_name}' created successfully")
-            return True
-        except Exception as e:
-            print(f"❌ Failed to create topic '{topic_name}': {str(e)}")
-            raise Exception(f"Failed to create topic '{topic_name}': {str(e)}")
     
     def check_kafka_topics(**context):
         """Kiểm tra và tự động tạo Kafka topics (input và output) nếu chưa tồn tại"""
