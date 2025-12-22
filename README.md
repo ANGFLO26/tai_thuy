@@ -661,7 +661,7 @@ with DAG(
 
 **Giảng viên hướng dẫn**: Dr. Cao Tien Dung
 
-**Trường**: Đại học Bách Khoa - Đại học Quốc gia TP.HCM  
+**Trường**: Đại học Tân Tạo  
 **Khoa**: Công nghệ Thông tin
 
 ---
